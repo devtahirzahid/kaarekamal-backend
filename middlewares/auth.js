@@ -11,8 +11,16 @@ const authenticate = async (req, res, next) => {
   try {
     const decodedToken = jwt.verify(token, process.env.SECRET_KEY);
     const user = await User.findById(decodedToken.id);
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user && user.tokenBlacklist.includes(token)) {
+      console.log("failure token");
+      return res
+        .status(401)
+        .json({ error: "Unauthorized - Token is invalid", status: 401 });
     }
 
     req.user = user;
