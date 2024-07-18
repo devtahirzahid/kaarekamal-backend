@@ -22,6 +22,15 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "admin"],
       default: "user",
     },
+    tokenBlacklist: {
+      type: Array,
+    },
+    lastActive: {
+      type: Date,
+    },
+    token: {
+      type: String,
+    },
   },
   { timestamps: true }
 );
