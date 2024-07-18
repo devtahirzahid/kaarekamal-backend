@@ -20,15 +20,17 @@ const login = async (req, res) => {
   }
 
   const token = createSecretToken(user._id);
+  user.token = token;
+  user.save();
 
-  res.cookie("token", token, {
-    domain: process.env.frontend_url, // Set your domain here
-    path: "/", // Cookie is accessible from all paths
-    expires: new Date(Date.now() + 86400000), // Cookie expires in 1 day
-    secure: true, // Cookie will only be sent over HTTPS
-    httpOnly: true, // Cookie cannot be accessed via client-side scripts
-    sameSite: "None",
-  });
+  // res.cookie("token", token, {
+  //   domain: process.env.frontend_url, // Set your domain here
+  //   path: "/", // Cookie is accessible from all paths
+  //   expires: new Date(Date.now() + 86400000), // Cookie expires in 1 day
+  //   secure: true, // Cookie will only be sent over HTTPS
+  //   httpOnly: true, // Cookie cannot be accessed via client-side scripts
+  //   sameSite: "None",
+  // });
 
   res.json({ token });
 };
