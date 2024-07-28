@@ -1,32 +1,36 @@
 const express = require("express");
-var bodyParser = require("body-parser");
+const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
+const cors = require("cors"); // Import CORS middleware
 
 const app = express();
-
 const Connection = require("./database/db");
+const authRoute = require("./routes/auth");
 
 const PORT = process.env.PORT || 8000;
 
-const authRoute = require("./routes/auth");
-
+// Connect to the database
 Connection();
 
-app.use(bodyParser.json({ extended: true }));
+// Use CORS middleware with detailed options
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL, // Replace with your frontend domain
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
+
+// Parse JSON bodies
+app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-app.use((req, res, next) => {
-  // Set CORS headers
-  res.header("Access-Control-Allow-Origin", process.env.FRONTEND_URL); // Replace with your frontend domain
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.header("Access-Control-Allow-Credentials", "true"); // Allow credentials (cookies, etc.)
-
-  // Pass to next layer of middleware
-  next();
-});
+// Routes
 app.use("/api", authRoute);
+
+// Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on PORT ${PORT}`);
 });
