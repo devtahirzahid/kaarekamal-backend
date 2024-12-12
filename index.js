@@ -5,7 +5,8 @@ const cors = require("cors"); // Import CORS middleware
 
 const app = express();
 const Connection = require("./database/db");
-const authRoute = require("./routes/auth");
+const authRoutes = require("./routes/authRoutes");
+const eventRoutes = require("./routes/eventRoutes");
 
 const PORT = process.env.PORT || 8000;
 
@@ -28,7 +29,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // Routes
-app.use("/api", authRoute);
+app.use("/api", authRoutes);
+app.use("/api/events", eventRoutes);
 
 // Start the server
 app.listen(PORT, () => {
