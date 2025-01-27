@@ -3,11 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const mkpMemberSchema = new mongoose.Schema(
   {
-    firstName: {
-      type: String,
-      required: true,
-    },
-    lastName: {
+    fullName: {
       type: String,
       required: true,
     },
