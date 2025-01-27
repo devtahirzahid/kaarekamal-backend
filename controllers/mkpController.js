@@ -36,7 +36,7 @@ exports.createMember = async (req, res) => {
 exports.getAllMembers = async (req, res) => {
   try {
     const members = await MKPMember.find();
-    res.status(200).json(members);
+    res.status(200).json({ submissions: members });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
