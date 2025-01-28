@@ -16,20 +16,7 @@ const mkpMemberSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-    birthDate: {
-      type: Date,
-      required: true,
-    },
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-    },
     phone: {
-      type: String,
-      required: true,
-    },
-    address: {
       type: String,
       required: true,
     },
@@ -37,7 +24,10 @@ const mkpMemberSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-
+    residentialCity: {
+      type: String,
+      required: true,
+    },
     district: {
       type: String,
       required: true,
@@ -61,6 +51,9 @@ const mkpMemberSchema = new mongoose.Schema(
     reasonForChapter: {
       type: String,
       required: true,
+    },
+    referredBy: {
+      type: String,
     },
   },
   { timestamps: true }
