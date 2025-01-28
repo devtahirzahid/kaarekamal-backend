@@ -3,6 +3,16 @@ const MKPMember = require("../database/models/MKPMember");
 // Create a new MKP Member
 exports.createMember = async (req, res) => {
   try {
+    if (req.body.email) {
+      const member = await MKPMember.findOne({ email: req.body.email });
+
+      if (member) {
+        return res.status(400).json({
+          message: "You have already submitted the form with this email",
+        });
+      }
+    }
+
     if (req.body.cnic) {
       const member = await MKPMember.findOne({ cnic: req.body.cnic });
 
