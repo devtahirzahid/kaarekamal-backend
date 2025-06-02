@@ -8,6 +8,7 @@ const Connection = require("./database/db");
 const authRoutes = require("./routes/authRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const mkpRoutes = require("./routes/mkpRoutes");
+const kkMemberRoutes = require("./routes/kkMemberRoutes");
 
 const PORT = process.env.PORT || 8000;
 
@@ -33,6 +34,7 @@ app.use(cookieParser());
 app.use("/api", authRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/mkp", mkpRoutes);
+app.use("/api/kk", kkMemberRoutes);
 
 // Start the server
 app.listen(PORT, () => {
