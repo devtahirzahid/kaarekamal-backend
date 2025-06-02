@@ -50,7 +50,7 @@ const kkMemberSchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ["social", "friend", "family", "other"],
+      enum: ["social", "friend", "family", "college", "other"],
       required: true,
     },
     email: {
