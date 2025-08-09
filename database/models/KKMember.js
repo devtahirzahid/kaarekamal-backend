@@ -13,6 +13,7 @@ const kkMemberSchema = new mongoose.Schema(
     contactNumber: {
       type: String,
       required: true,
+      unique: true,
     },
     residentialCity: {
       type: String,
