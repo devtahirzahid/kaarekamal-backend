@@ -22,12 +22,43 @@ exports.createMember = async (req, res) => {
         });
       }
     }
+
+    if (req.body.contactNumber) {
+      const member = await KKMember.findOne({
+        contactNumber: req.body.contactNumber,
+      });
+
+      if (member) {
+        return res.status(400).json({
+          message:
+            "You have already submitted the form with this contact number",
+        });
+      }
+    }
+
     const newMember = new KKMember(req.body);
     await newMember.save();
     res
       .status(201)
       .json({ submission: newMember, message: "Form submitted successfully" });
   } catch (error) {
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      let message = "Duplicate entry detected";
+
+      if (field === "contactNumber") {
+        message =
+          "You have already submitted the form with this contact number";
+      } else if (field === "email") {
+        message = "You have already submitted the form with this email";
+      } else if (field === "cnic") {
+        message = "You have already submitted the form with this cnic number";
+      }
+
+      return res.status(400).json({ message });
+    }
+
     res.status(400).json({ message: error.message });
   }
 };
