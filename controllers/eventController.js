@@ -1,90 +1,80 @@
-const Event = require("../database/models/Event");
+const Event = require('../database/models/eventModel');
+const multer = require('multer');
+const path = require('path');
 
-// Create an event
-const createEvent = async (req, res) => {
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/events/');
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ storage: storage });
+
+exports.uploadEventImage = upload.single('image');
+
+exports.createEvent = async (req, res) => {
   try {
-    const newEvent = new Event(req.body);
+    const { title, description, date, location } = req.body;
+    let image;
+    if (req.file) {
+      image = `/uploads/events/${req.file.filename}`;
+    }
+    const newEvent = new Event({ title, description, date, location, image });
     await newEvent.save();
-    res
-      .status(201)
-      .json({ message: "Event created successfully", event: newEvent });
+    res.status(201).json(newEvent);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ message: error.message });
   }
 };
 
-// Get all events
-const getAllEvents = async (req, res) => {
+exports.getAllEvents = async (req, res) => {
   try {
     const events = await Event.find();
-    res.status(200).json({ events: events });
+    res.status(200).json(events);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// Get a single event
-const getEventById = async (req, res) => {
-  const { id } = req.params;
-
+exports.getEventById = async (req, res) => {
   try {
-    const event = await Event.findById(id);
-    if (!event) return res.status(404).json({ message: "Event not found" });
-
-    res.status(200).json({ data: event });
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    res.status(200).json(event);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// Update an event
-const updateEvent = async (req, res) => {
-  const { id } = req.params;
-
+exports.updateEvent = async (req, res) => {
   try {
-    const updatedEvent = await Event.findByIdAndUpdate(id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const { title, description, date, location } = req.body;
+    let image;
+    if (req.file) {
+      image = `/uploads/events/${req.file.filename}`;
+    }
+    const updatedData = { title, description, date, location };
+    if (image) {
+      updatedData.image = image;
+    }
 
-    if (!updatedEvent)
-      return res.status(404).json({ message: "Event not found" });
-
-    res
-      .status(200)
-      .json({ message: "Event updated successfully", data: updatedEvent });
+    const event = await Event.findByIdAndUpdate(req.params.id, updatedData, { new: true });
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    res.status(200).json(event);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ message: error.message });
   }
 };
 
-// Delete an event
-const deleteEvent = async (req, res) => {
-  const { id } = req.params;
-
+exports.deleteEvent = async (req, res) => {
   try {
-    const deletedEvent = await Event.findByIdAndDelete(id);
-
-    if (!deletedEvent)
-      return res.status(404).json({ message: "Event not found" });
-
-    res
-      .status(200)
-      .json({ message: "Event deleted successfully", data: deletedEvent });
+    const event = await Event.findByIdAndDelete(req.params.id);
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    res.status(200).json({ message: 'Event deleted successfully' });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ message: error.message });
   }
-};
-
-module.exports = {
-  createEvent,
-  getAllEvents,
-  getEventById,
-  updateEvent,
-  deleteEvent,
 };

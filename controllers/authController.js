@@ -33,9 +33,9 @@ const login = async (req, res) => {
 
 // Create User function
 const createUser = async (req, res) => {
-  const { email, password, name, username } = req.body;
+  const { email, password, username } = req.body;
 
-  if (!(email && password && name && username)) {
+  if (!(email && password && username)) {
     return res.status(400).send("All input is required");
   }
 
@@ -50,7 +50,6 @@ const createUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = new User({
-      name,
       username,
       email,
       password: hashedPassword,
