@@ -11,6 +11,9 @@ const eventRoutes = require("./routes/eventRoutes");
 const mkpRoutes = require("./routes/mkpRoutes");
 const kkMemberRoutes = require("./routes/kkMemberRoutes");
 const blogRoutes = require("./routes/blogRoutes");
+const verificationRoutes = require("./routes/verificationRoutes"); // Import verification routes
+const caseRoutes = require("./routes/caseRoutes"); // Import case routes
+const bloodDonorRoutes = require("./routes/bloodDonorroutes"); // Corrected casing
 
 const PORT = process.env.PORT || 4000;
 
@@ -41,6 +44,9 @@ app.use("/api/events", eventRoutes);
 app.use("/api/mkp", mkpRoutes);
 app.use("/api/kk", kkMemberRoutes);
 app.use("/api/blogs", blogRoutes); // Use blog routes
+app.use("/api/verifications", verificationRoutes); // Use verification routes
+app.use("/api/cases", caseRoutes); // Use case routes
+app.use("/api/blood-donors", bloodDonorRoutes); // Use blood donor routes
 
 // Start the server
 app.listen(PORT, () => {
