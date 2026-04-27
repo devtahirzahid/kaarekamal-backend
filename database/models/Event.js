@@ -49,6 +49,15 @@ const eventSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    // Use these when selecting from bundled app assets (e.g. "/images/event/azm-e-kamal.jpg")
+    bannerImagePath: {
+      type: String,
+      default: "",
+    },
+    cardImagePath: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );
