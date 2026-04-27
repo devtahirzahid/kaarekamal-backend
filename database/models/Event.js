@@ -1,5 +1,13 @@
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+
+function slugify(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+}
 
 const eventSchema = new mongoose.Schema(
   {
@@ -7,6 +15,11 @@ const eventSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
+    },
+    slug: {
+      type: String,
+      unique: true,
+      index: true,
     },
     description: {
       type: String,
@@ -28,9 +41,24 @@ const eventSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+    bannerImageUrl: {
+      type: String,
+      default: "",
+    },
+    cardImageUrl: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );
+
+eventSchema.pre("validate", function (next) {
+  if (!this.slug && this.title) {
+    this.slug = slugify(this.title);
+  }
+  next();
+});
 
 const Event = mongoose.model("Event", eventSchema);
 

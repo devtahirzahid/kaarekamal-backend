@@ -9,6 +9,7 @@ const authRoutes = require("./routes/authRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const mkpRoutes = require("./routes/mkpRoutes");
 const kkMemberRoutes = require("./routes/kkMemberRoutes");
+const bloodDonorRoutes = require("./routes/bloodDonorRoutes");
 
 const PORT = process.env.PORT || 8000;
 
@@ -35,6 +36,7 @@ app.use("/api", authRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/mkp", mkpRoutes);
 app.use("/api/kk", kkMemberRoutes);
+app.use("/api/bdd", bloodDonorRoutes);
 
 // Start the server
 app.listen(PORT, () => {
