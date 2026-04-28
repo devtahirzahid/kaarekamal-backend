@@ -27,10 +27,14 @@ app.use(
   })
 );
 
-// Parse JSON bodies
+app.use(cookieParser());
+
+// Multipart uploads must not go through json/urlencoded parsers first.
+app.use("/api/uploads", uploadRoutes);
+
+// Parse JSON bodies (everything except uploads above)
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(cookieParser());
 
 // Routes
 app.use("/api", authRoutes);
@@ -38,9 +42,12 @@ app.use("/api/events", eventRoutes);
 app.use("/api/mkp", mkpRoutes);
 app.use("/api/kk", kkMemberRoutes);
 app.use("/api/bdd", bloodDonorRoutes);
-app.use("/api/uploads", uploadRoutes);
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server is running on PORT ${PORT}`);
-});
+// Vercel runs the app as a serverless handler — export for the platform; listen locally only.
+module.exports = app;
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on PORT ${PORT}`);
+  });
+}

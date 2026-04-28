@@ -30,8 +30,12 @@ const ensureDir = (dir) => {
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    ensureDir(uploadsDir);
-    cb(null, uploadsDir);
+    try {
+      ensureDir(uploadsDir);
+      cb(null, uploadsDir);
+    } catch (e) {
+      cb(e);
+    }
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
@@ -60,6 +64,16 @@ const upload = multer({
 // POST /api/uploads/event-image
 // form-data: file=<image>
 router.post("/event-image", (req, res) => {
+  // Hosted on Vercel: no persistent disk and no sibling kaarekamal-web folder in the bundle.
+  // Repo-local uploads only work when this API runs on your machine (or a VPS with a writable path).
+  if (process.env.VERCEL) {
+    return res.status(503).json({
+      code: "UPLOAD_NOT_SUPPORTED",
+      message:
+        "Image upload into the website repo is not available on the hosted API (Vercel). Run kaarekamal-backend locally, then in kaarekamal-admin-dashboard create .env.local with NEXT_PUBLIC_API_BASE_URL=http://localhost:4000/api (or your PORT) and upload again. For production, use object storage (e.g. S3 / Cloudinary) and store the returned URL on the event.",
+    });
+  }
+
   upload.single("file")(req, res, (err) => {
     if (err) {
       const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
