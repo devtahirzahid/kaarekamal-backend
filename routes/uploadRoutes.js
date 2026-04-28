@@ -9,16 +9,20 @@ const router = express.Router();
 // can serve them as static assets in local/dev workflows.
 //
 // NOTE: This is not suitable for Vercel/serverless deployments (filesystem is ephemeral).
-const uploadsDir = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "kaarekamal-web",
-  "public",
-  "images",
-  "event",
-  "uploads"
-);
+// Override with absolute path if backend repo is not next to kaarekamal-web:
+// EVENT_UPLOAD_DIR=/full/path/to/kaarekamal-web/public/images/event/uploads
+const uploadsDir = process.env.EVENT_UPLOAD_DIR
+  ? path.resolve(process.env.EVENT_UPLOAD_DIR)
+  : path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "kaarekamal-web",
+      "public",
+      "images",
+      "event",
+      "uploads"
+    );
 
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -45,23 +49,31 @@ const upload = multer({
   storage,
   limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
   fileFilter: (req, file, cb) => {
-    const ok = /^image\//.test(file.mimetype || "");
-    cb(ok ? null : new Error("Only image uploads are allowed"), ok);
+    if (/^image\//.test(file.mimetype || "")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image uploads are allowed"));
+    }
   },
 });
 
 // POST /api/uploads/event-image
 // form-data: file=<image>
-router.post("/event-image", upload.single("file"), (req, res) => {
-  if (!req.file) return res.status(400).json({ message: "Missing file" });
+router.post("/event-image", (req, res) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ message: err.message || "Upload failed" });
+    }
+    if (!req.file) return res.status(400).json({ message: "Missing file" });
 
-  // Path that kaarekamal-web can serve from /public
-  const publicPath = `/images/event/uploads/${req.file.filename}`;
+    const publicPath = `/images/event/uploads/${req.file.filename}`;
 
-  res.status(201).json({
-    message: "Uploaded",
-    path: publicPath,
-    filename: req.file.filename,
+    return res.status(201).json({
+      message: "Uploaded",
+      path: publicPath,
+      filename: req.file.filename,
+    });
   });
 });
 
