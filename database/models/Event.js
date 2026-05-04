@@ -41,6 +41,10 @@ const eventSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+    imageUrl: {
+      type: String,
+      default: "",
+    },
     bannerImageUrl: {
       type: String,
       default: "",

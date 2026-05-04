@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
@@ -17,10 +19,28 @@ const PORT = process.env.PORT || 8000;
 // Connect to the database
 Connection();
 
+const parseAllowedOrigins = () => {
+  const raw = process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || "";
+  return raw
+    .split(/[,;]/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+};
+
 // Use CORS middleware with detailed options
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL, // Replace with your frontend domain
+    origin: (origin, cb) => {
+      const allowed = parseAllowedOrigins();
+
+      // Non-browser clients (curl/server-to-server) may omit Origin
+      if (!origin) return cb(null, true);
+
+      if (allowed.length === 0) return cb(null, true);
+      if (allowed.includes(origin)) return cb(null, true);
+
+      return cb(new Error(`Not allowed by CORS: ${origin}`));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,

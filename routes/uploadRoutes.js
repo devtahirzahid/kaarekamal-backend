@@ -1,57 +1,32 @@
 const express = require("express");
+const crypto = require("crypto");
 const path = require("path");
-const fs = require("fs");
 const multer = require("multer");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const {
+  signCloudFrontUrlIfConfigured,
+  resolveCloudFrontPublicBaseUrl,
+  resolveCloudFrontDomain,
+} = require("../utils/cdn");
 
 const router = express.Router();
 
-// Stores uploaded images directly into the kaarekamal-web repo folder so the web app
-// can serve them as static assets in local/dev workflows.
-//
-// NOTE: This is not suitable for Vercel/serverless deployments (filesystem is ephemeral).
-// Override with absolute path if backend repo is not next to kaarekamal-web:
-// EVENT_UPLOAD_DIR=/full/path/to/kaarekamal-web/public/images/event/uploads
-const uploadsDir = process.env.EVENT_UPLOAD_DIR
-  ? path.resolve(process.env.EVENT_UPLOAD_DIR)
-  : path.resolve(
-      __dirname,
-      "..",
-      "..",
-      "kaarekamal-web",
-      "public",
-      "images",
-      "event",
-      "uploads"
-    );
+const s3Region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+const s3Bucket = process.env.S3_BUCKET || process.env.AWS_BUCKET;
+const s3Prefix = (process.env.S3_EVENT_IMAGE_PREFIX || "events").replace(/^\/+|\/+$/g, "");
 
-const ensureDir = (dir) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-};
+const s3Client =
+  s3Region && s3Bucket
+    ? new S3Client({
+        region: s3Region,
+      })
+    : null;
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    try {
-      ensureDir(uploadsDir);
-      cb(null, uploadsDir);
-    } catch (e) {
-      cb(e);
-    }
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const safeBase = path
-      .basename(file.originalname || "upload", ext)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "");
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${safeBase || "upload"}-${unique}${ext || ".jpg"}`);
-  },
-});
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     if (/^image\//.test(file.mimetype || "")) {
       cb(null, true);
@@ -61,33 +36,88 @@ const upload = multer({
   },
 });
 
+function buildObjectKey(originalName) {
+  const ext = path.extname(originalName || "").toLowerCase();
+  const safeExt = ext && ext.length <= 8 ? ext : "";
+  const id = crypto.randomBytes(16).toString("hex");
+  return `${s3Prefix}/${id}${safeExt || ""}`;
+}
+
+function buildPublicCloudFrontUrlForKey(key) {
+  const publicBaseUrl = resolveCloudFrontPublicBaseUrl();
+  const domain = resolveCloudFrontDomain();
+
+  if (publicBaseUrl) {
+    return `${publicBaseUrl.replace(/\/+$/, "")}/${key}`;
+  }
+
+  if (domain) {
+    return `https://${domain.replace(/^\/+|\/+$/g, "")}/${key}`;
+  }
+
+  // Fallback: S3 URL (works if bucket is public; not recommended)
+  if (s3Bucket && s3Region) {
+    return `https://${s3Bucket}.s3.${s3Region}.amazonaws.com/${key}`;
+  }
+
+  return null;
+}
+
 // POST /api/uploads/event-image
 // form-data: file=<image>
 router.post("/event-image", (req, res) => {
-  // Hosted on Vercel: no persistent disk and no sibling kaarekamal-web folder in the bundle.
-  // Repo-local uploads only work when this API runs on your machine (or a VPS with a writable path).
-  if (process.env.VERCEL) {
-    return res.status(503).json({
-      code: "UPLOAD_NOT_SUPPORTED",
-      message:
-        "Image upload into the website repo is not available on the hosted API (Vercel). Run kaarekamal-backend locally, then in kaarekamal-admin-dashboard create .env.local with NEXT_PUBLIC_API_BASE_URL=http://localhost:4000/api (or your PORT) and upload again. For production, use object storage (e.g. S3 / Cloudinary) and store the returned URL on the event.",
-    });
-  }
-
-  upload.single("file")(req, res, (err) => {
+  upload.single("file")(req, res, async (err) => {
     if (err) {
       const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
       return res.status(status).json({ message: err.message || "Upload failed" });
     }
     if (!req.file) return res.status(400).json({ message: "Missing file" });
 
-    const publicPath = `/images/event/uploads/${req.file.filename}`;
+    if (!s3Client || !s3Bucket) {
+      return res.status(500).json({
+        message:
+          "S3 is not configured. Set AWS_REGION (or AWS_DEFAULT_REGION) and S3_BUCKET (or AWS_BUCKET) on the backend.",
+      });
+    }
 
-    return res.status(201).json({
-      message: "Uploaded",
-      path: publicPath,
-      filename: req.file.filename,
-    });
+    try {
+      const key = buildObjectKey(req.file.originalname);
+
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: s3Bucket,
+          Key: key,
+          Body: req.file.buffer,
+          ContentType: req.file.mimetype || "application/octet-stream",
+          CacheControl: process.env.S3_CACHE_CONTROL || "public, max-age=31536000, immutable",
+        })
+      );
+
+      const publicUrl = buildPublicCloudFrontUrlForKey(key);
+      if (!publicUrl) {
+        return res.status(500).json({
+          message:
+            "Upload succeeded but no public URL could be built. Set CLOUDFRONT_PUBLIC_BASE_URL (or AWS_CLOUDFRONT_PUBLIC_BASE_URL) or CLOUDFRONT_DOMAIN.",
+          key,
+        });
+      }
+
+      // Store `publicUrl` in Mongo (unsigned). Clients should fetch via short-lived signed URLs
+      // returned from the Events API (`mapImageUrlForResponse`).
+      const signedPreviewUrl = signCloudFrontUrlIfConfigured(publicUrl);
+
+      return res.status(201).json({
+        message: "Uploaded",
+        // Back-compat: `url` is the stable URL to persist
+        url: publicUrl,
+        publicUrl,
+        signedPreviewUrl,
+        key,
+        bucket: s3Bucket,
+      });
+    } catch (e) {
+      return res.status(500).json({ message: e?.message || "S3 upload failed" });
+    }
   });
 });
 
