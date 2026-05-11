@@ -3,6 +3,16 @@ const Counter = require("./Counter");
 
 const kkMemberSchema = new mongoose.Schema(
   {
+    /**
+     * Which intake pipeline this document belongs to (same collection, distinct use-cases).
+     * induction = Become a Kamalian (lighter form); kk_member = full KK / official-member registry.
+     */
+    applicationKind: {
+      type: String,
+      enum: ["induction", "kk_member"],
+      default: "induction",
+      index: true,
+    },
     /** buffer = pending approval; approved = promoted to OfficialKKMember; rejected = declined */
     applicationStage: {
       type: String,

@@ -101,6 +101,20 @@ function assertCompleteBufferCreate(p) {
   return null;
 }
 
+/** Become a Kamalian (induction) — fewer required fields than full KK member intake. */
+function assertInductionCreate(p) {
+  if (!trimStr(p.fullName)) return "Full name is required";
+  if (!trimStr(p.contactNumber)) return "Contact number is required";
+  if (!PHONE_RE.test(trimStr(p.contactNumber))) return "Enter a valid contact number";
+  if (!trimStr(p.fatherName)) return "Father's name is required";
+  if (!GENDERS.has(p.gender)) return "Gender is required";
+  if (!trimStr(p.residentialCity)) return "Residential city is required";
+  if (!trimStr(p.homeTown)) return "Hometown is required";
+  if (!ACTIVE_LOC.has(p.activeLocation)) return "Active location is required";
+  if (!SOURCES.has(p.source)) return "Source is required";
+  return null;
+}
+
 function statusFilter(status) {
   const s = String(status || "").toLowerCase();
   if (s === "removed") return { memberStatus: "removed" };
@@ -140,6 +154,24 @@ function mergeAndFilters(a, b) {
   if (hasA && hasB) return { $and: [a, b] };
   if (hasA) return a;
   if (hasB) return b;
+  return {};
+}
+
+/** GET list filter: all | kk_member | induction (legacy docs missing field count as induction). */
+function applicationKindFilter(kind) {
+  const k = String(kind || "all").toLowerCase();
+  if (!k || k === "all") return {};
+  if (k === "kk_member") return { applicationKind: "kk_member" };
+  if (k === "induction") {
+    return {
+      $or: [
+        { applicationKind: "induction" },
+        { applicationKind: { $exists: false } },
+        { applicationKind: null },
+        { applicationKind: "" },
+      ],
+    };
+  }
   return {};
 }
 
@@ -199,21 +231,51 @@ exports.createMember = async (req, res) => {
       "relocationRecordedAt",
     ].forEach((k) => delete payload[k]);
 
-    const emailTrimmed = String(payload.email || "").trim();
-    if (!emailTrimmed) {
-      return res.status(400).json({ message: "Email is required" });
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
-      return res.status(400).json({ message: "Enter a valid email address" });
-    }
-    payload.email = emailTrimmed.toLowerCase();
+    const rawKind = String(payload.applicationKind || "induction").toLowerCase();
+    const applicationKind = rawKind === "kk_member" ? "kk_member" : "induction";
+    payload.applicationKind = applicationKind;
 
-    payload.cnic = normalizeCnicDigits(payload.cnic);
-    const completenessErr = assertCompleteBufferCreate(payload);
-    if (completenessErr) {
-      return res.status(400).json({ message: completenessErr });
+    if (applicationKind === "kk_member") {
+      const emailTrimmed = String(payload.email || "").trim();
+      if (!emailTrimmed) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+        return res.status(400).json({ message: "Enter a valid email address" });
+      }
+      payload.email = emailTrimmed.toLowerCase();
+
+      payload.cnic = normalizeCnicDigits(payload.cnic);
+      const completenessErr = assertCompleteBufferCreate(payload);
+      if (completenessErr) {
+        return res.status(400).json({ message: completenessErr });
+      }
+      payload.jobian = normalizeJobianServer(payload.jobian);
+    } else {
+      const inductionErr = assertInductionCreate(payload);
+      if (inductionErr) {
+        return res.status(400).json({ message: inductionErr });
+      }
+      const emailTrimmed = String(payload.email || "").trim();
+      if (emailTrimmed) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+          return res.status(400).json({ message: "Enter a valid email address" });
+        }
+        payload.email = emailTrimmed.toLowerCase();
+      } else {
+        delete payload.email;
+      }
+      const cnicDigits = normalizeCnicDigits(payload.cnic);
+      if (cnicDigits.length > 0 && cnicDigits.length !== 13) {
+        return res.status(400).json({ message: "CNIC must be 13 digits" });
+      }
+      if (cnicDigits.length === 13) {
+        payload.cnic = cnicDigits;
+      } else {
+        delete payload.cnic;
+      }
+      payload.jobian = normalizeJobianServer(payload.jobian) || "";
     }
-    payload.jobian = normalizeJobianServer(payload.jobian);
 
     const taken = await contactTakenForNewApplication({
       contactNumber: payload.contactNumber,
@@ -259,7 +321,10 @@ exports.createMember = async (req, res) => {
 
 exports.getAllMembers = async (req, res) => {
   try {
-    const filter = mergeAndFilters(poolFilter(req.query.pool), statusFilter(req.query.status));
+    const filter = mergeAndFilters(
+      mergeAndFilters(poolFilter(req.query.pool), statusFilter(req.query.status)),
+      applicationKindFilter(req.query.kind)
+    );
     const members = await KKMember.find(filter).sort({ createdAt: -1 });
     res.status(200).json({ submissions: members.map(serializeMember) });
   } catch (error) {
@@ -271,6 +336,12 @@ exports.getMemberStats = async (req, res) => {
   try {
     const bufferFilter = poolFilter("buffer");
     const bufferApplications = await KKMember.countDocuments(bufferFilter);
+    const bufferApplicationsKkMember = await KKMember.countDocuments(
+      mergeAndFilters(bufferFilter, { applicationKind: "kk_member" })
+    );
+    const bufferApplicationsInduction = await KKMember.countDocuments(
+      mergeAndFilters(bufferFilter, applicationKindFilter("induction"))
+    );
 
     const officialTotal = await OfficialKKMember.countDocuments();
     const officialRemoved = await OfficialKKMember.countDocuments({ memberStatus: "removed" });
@@ -298,6 +369,8 @@ exports.getMemberStats = async (req, res) => {
 
     res.status(200).json({
       bufferApplications,
+      bufferApplicationsKkMember,
+      bufferApplicationsInduction,
       officialTotal,
       officialActive,
       officialRelocated,
@@ -329,6 +402,7 @@ exports.getMemberById = async (req, res) => {
 exports.updateMemberById = async (req, res) => {
   try {
     const payload = normalizeIncomingBody(req.body);
+    delete payload.applicationKind;
     if (payload.cnic === "") delete payload.cnic;
     if (payload.email === "") delete payload.email;
 
@@ -440,6 +514,7 @@ exports.approveBufferMember = async (req, res) => {
     delete plain.registrationId;
     delete plain.createdAt;
     delete plain.updatedAt;
+    delete plain.applicationKind;
 
     const official = new OfficialKKMember({
       ...plain,
@@ -519,6 +594,7 @@ function normalizeOfficialBody(body) {
 exports.updateOfficialMemberById = async (req, res) => {
   try {
     const payload = normalizeOfficialBody(normalizeIncomingBody(req.body));
+    delete payload.applicationKind;
     if (payload.cnic === "") delete payload.cnic;
     if (payload.email === "") delete payload.email;
 
