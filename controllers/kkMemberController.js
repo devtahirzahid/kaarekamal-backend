@@ -24,12 +24,6 @@ function normalizeIncomingBody(body) {
   if (next.city && !next.residentialCity) next.residentialCity = next.city;
   if (next.university && !next.institution) next.institution = next.university;
 
-  next.activeLocation = next.activeLocation || "residential";
-  next.source = next.source || "other";
-  if (next.motivation === undefined) next.motivation = "";
-  if (next.referredBy === undefined) next.referredBy = "";
-  if (next.fatherName === undefined) next.fatherName = "";
-  if (next.homeTown === undefined) next.homeTown = "";
   if (next.cnic === "") delete next.cnic;
   if (next.email === "") delete next.email;
 
@@ -37,6 +31,74 @@ function normalizeIncomingBody(body) {
   delete next.university;
 
   return next;
+}
+
+function trimStr(v) {
+  return String(v == null ? "" : v).trim();
+}
+
+function isValidDateInput(v) {
+  if (!trimStr(v)) return false;
+  const d = new Date(v);
+  return !Number.isNaN(d.getTime());
+}
+
+function normalizeCnicDigits(v) {
+  return String(v == null ? "" : v).replace(/\D/g, "");
+}
+
+/** Stored CNIC may be 13 digits or #####-#######-# — match duplicates across formats. */
+function cnicLookupValues(d13) {
+  if (!d13 || d13.length !== 13) return [];
+  const dashed = `${d13.slice(0, 5)}-${d13.slice(5, 12)}-${d13.slice(12)}`;
+  return [d13, dashed];
+}
+
+function normalizeJobianServer(v) {
+  const s = trimStr(v).toLowerCase();
+  if (!s) return "";
+  if (["yes", "y", "true", "1"].includes(s)) return "yes";
+  if (["no", "n", "false", "0"].includes(s)) return "no";
+  if (["n_a", "n/a", "na", "not applicable", "n.a"].includes(s)) return "n_a";
+  return "";
+}
+
+const PHONE_RE = /^\+?[0-9\s\-]+$/;
+const GENDERS = new Set(["male", "female", "other"]);
+const SOURCES = new Set(["social", "friend", "family", "college", "other"]);
+const BLOOD = new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "not_aware"]);
+const ACTIVE_LOC = new Set(["residential", "hometown"]);
+
+/** Full application required for new buffer members (public form + API contract). */
+function assertCompleteBufferCreate(p) {
+  if (!trimStr(p.fullName)) return "Full name is required";
+  if (!trimStr(p.contactNumber)) return "Contact number is required";
+  if (!PHONE_RE.test(trimStr(p.contactNumber))) return "Enter a valid contact number";
+  if (!trimStr(p.fatherName)) return "Father's name is required";
+  if (!trimStr(p.guardianContact)) return "Guardian's contact is required";
+  if (!PHONE_RE.test(trimStr(p.guardianContact))) return "Enter a valid guardian's contact number";
+  if (!isValidDateInput(p.dateOfBirth)) return "Date of birth is required";
+  if (!isValidDateInput(p.dateOfJoining)) return "Date of joining is required";
+  if (!GENDERS.has(p.gender)) return "Gender is required";
+  if (!trimStr(p.residentialCity)) return "City (chapter) is required";
+  if (!trimStr(p.chapter)) return "Chapter name is required";
+  if (!BLOOD.has(p.bloodGroup)) return "Blood group is required";
+  if (!trimStr(p.institution)) return "University is required";
+  if (!trimStr(p.program)) return "Program is required";
+  if (!trimStr(p.session)) return "Session is required";
+  if (p.hostellite !== "yes" && p.hostellite !== "no") return "Hostellite (Yes / No) is required";
+  if (!trimStr(p.currentAddress)) return "Current address is required";
+  if (!trimStr(p.permanentAddress)) return "Permanent address is required";
+  if (!trimStr(p.homeTown)) return "Hometown is required";
+  if (!ACTIVE_LOC.has(p.activeLocation)) return "Where you can actively participate is required";
+  if (!SOURCES.has(p.source)) return "How did you hear about us is required";
+  if (!trimStr(p.referredBy)) return "Referred by is required";
+  if (!trimStr(p.motivation)) return "Motivation is required";
+  const cnicDigits = normalizeCnicDigits(p.cnic);
+  if (cnicDigits.length !== 13) return "CNIC must be 13 digits";
+  const job = normalizeJobianServer(p.jobian);
+  if (!["yes", "no", "n_a"].includes(job)) return "Jobian is required";
+  return null;
 }
 
 function statusFilter(status) {
@@ -113,10 +175,12 @@ async function contactTakenForNewApplication({ contactNumber, email, cnic }) {
     ]);
     if (b || o) return "email";
   }
-  if (cnic) {
+  const cnicDigits = cnic ? normalizeCnicDigits(cnic) : "";
+  if (cnicDigits.length === 13) {
+    const variants = cnicLookupValues(cnicDigits);
     const [b, o] = await Promise.all([
-      KKMember.findOne({ cnic, ...ACTIVE_BUFFER_STAGE }),
-      OfficialKKMember.findOne({ cnic }),
+      KKMember.findOne({ cnic: { $in: variants }, ...ACTIVE_BUFFER_STAGE }),
+      OfficialKKMember.findOne({ cnic: { $in: variants } }),
     ]);
     if (b || o) return "cnic";
   }
@@ -134,6 +198,22 @@ exports.createMember = async (req, res) => {
       "relocatedToCity",
       "relocationRecordedAt",
     ].forEach((k) => delete payload[k]);
+
+    const emailTrimmed = String(payload.email || "").trim();
+    if (!emailTrimmed) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      return res.status(400).json({ message: "Enter a valid email address" });
+    }
+    payload.email = emailTrimmed.toLowerCase();
+
+    payload.cnic = normalizeCnicDigits(payload.cnic);
+    const completenessErr = assertCompleteBufferCreate(payload);
+    if (completenessErr) {
+      return res.status(400).json({ message: completenessErr });
+    }
+    payload.jobian = normalizeJobianServer(payload.jobian);
 
     const taken = await contactTakenForNewApplication({
       contactNumber: payload.contactNumber,
