@@ -1,4 +1,5 @@
 const KKMember = require("../database/models/KKMember");
+const OfficialKKMember = require("../database/models/OfficialKKMember");
 
 function toObject(doc) {
   if (!doc) return doc;
@@ -16,6 +17,9 @@ function normalizeIncomingBody(body) {
   if (!body || typeof body !== "object") return body;
   const next = { ...body };
   delete next.registrationId;
+  delete next.applicationStage;
+  delete next.officialMemberId;
+  delete next.approvedAt;
 
   if (next.city && !next.residentialCity) next.residentialCity = next.city;
   if (next.university && !next.institution) next.institution = next.university;
@@ -52,44 +56,112 @@ function statusFilter(status) {
   return {};
 }
 
+/** Applications (KKMember) pool: buffer | approved | rejected | all */
+function poolFilter(pool) {
+  const p = String(pool || "buffer").toLowerCase();
+  if (p === "all") return {};
+  if (p === "approved") return { applicationStage: "approved" };
+  if (p === "rejected") return { applicationStage: "rejected" };
+  return {
+    $or: [
+      { applicationStage: "buffer" },
+      { applicationStage: { $exists: false } },
+      { applicationStage: null },
+      { applicationStage: "" },
+    ],
+  };
+}
+
+function mergeAndFilters(a, b) {
+  const hasA = a && Object.keys(a).length > 0;
+  const hasB = b && Object.keys(b).length > 0;
+  if (hasA && hasB) return { $and: [a, b] };
+  if (hasA) return a;
+  if (hasB) return b;
+  return {};
+}
+
+function serializeOfficial(doc) {
+  const o = toObject(doc);
+  if (!o) return o;
+  return { ...o, id: o._id };
+}
+
+const ACTIVE_BUFFER_STAGE = {
+  $or: [
+    { applicationStage: "buffer" },
+    { applicationStage: "rejected" },
+    { applicationStage: { $exists: false } },
+    { applicationStage: null },
+    { applicationStage: "" },
+  ],
+};
+
+/** Block new applications if contact/email/cnic is in buffer (non-approved) or on official roster. */
+async function contactTakenForNewApplication({ contactNumber, email, cnic }) {
+  if (contactNumber) {
+    const [b, o] = await Promise.all([
+      KKMember.findOne({ contactNumber, ...ACTIVE_BUFFER_STAGE }),
+      OfficialKKMember.findOne({ contactNumber }),
+    ]);
+    if (b || o) return "contactNumber";
+  }
+  if (email) {
+    const [b, o] = await Promise.all([
+      KKMember.findOne({ email, ...ACTIVE_BUFFER_STAGE }),
+      OfficialKKMember.findOne({ email }),
+    ]);
+    if (b || o) return "email";
+  }
+  if (cnic) {
+    const [b, o] = await Promise.all([
+      KKMember.findOne({ cnic, ...ACTIVE_BUFFER_STAGE }),
+      OfficialKKMember.findOne({ cnic }),
+    ]);
+    if (b || o) return "cnic";
+  }
+  return null;
+}
+
 exports.createMember = async (req, res) => {
   try {
     const payload = normalizeIncomingBody(req.body);
+    [
+      "memberStatus",
+      "removedAt",
+      "removalReason",
+      "relocatedFromCity",
+      "relocatedToCity",
+      "relocationRecordedAt",
+    ].forEach((k) => delete payload[k]);
 
-    if (payload.email) {
-      const existing = await KKMember.findOne({ email: payload.email });
-      if (existing) {
-        return res.status(400).json({
-          message: "A member with this email already exists",
-        });
-      }
-    }
-
-    if (payload.cnic) {
-      const existing = await KKMember.findOne({ cnic: payload.cnic });
-      if (existing) {
-        return res.status(400).json({
-          message: "A member with this CNIC already exists",
-        });
-      }
-    }
-
-    if (payload.contactNumber) {
-      const existing = await KKMember.findOne({
-        contactNumber: payload.contactNumber,
+    const taken = await contactTakenForNewApplication({
+      contactNumber: payload.contactNumber,
+      email: payload.email,
+      cnic: payload.cnic,
+    });
+    if (taken === "contactNumber") {
+      return res.status(400).json({
+        message:
+          "This contact number is already used in an open application or on the official roster",
       });
-      if (existing) {
-        return res.status(400).json({
-          message: "A member with this contact number already exists",
-        });
-      }
+    }
+    if (taken === "email") {
+      return res.status(400).json({
+        message: "This email is already used in an open application or on the official roster",
+      });
+    }
+    if (taken === "cnic") {
+      return res.status(400).json({
+        message: "This CNIC is already used in an open application or on the official roster",
+      });
     }
 
-    const newMember = new KKMember(payload);
+    const newMember = new KKMember({ ...payload, applicationStage: "buffer" });
     await newMember.save();
     res.status(201).json({
       submission: serializeMember(newMember),
-      message: "Member created successfully",
+      message: "Application received. An administrator will review it for approval.",
     });
   } catch (error) {
     if (error.code === 11000) {
@@ -107,7 +179,7 @@ exports.createMember = async (req, res) => {
 
 exports.getAllMembers = async (req, res) => {
   try {
-    const filter = statusFilter(req.query.status);
+    const filter = mergeAndFilters(poolFilter(req.query.pool), statusFilter(req.query.status));
     const members = await KKMember.find(filter).sort({ createdAt: -1 });
     res.status(200).json({ submissions: members.map(serializeMember) });
   } catch (error) {
@@ -117,10 +189,13 @@ exports.getAllMembers = async (req, res) => {
 
 exports.getMemberStats = async (req, res) => {
   try {
-    const total = await KKMember.countDocuments();
-    const removed = await KKMember.countDocuments({ memberStatus: "removed" });
-    const relocated = await KKMember.countDocuments({ memberStatus: "relocated" });
-    const active = await KKMember.countDocuments({
+    const bufferFilter = poolFilter("buffer");
+    const bufferApplications = await KKMember.countDocuments(bufferFilter);
+
+    const officialTotal = await OfficialKKMember.countDocuments();
+    const officialRemoved = await OfficialKKMember.countDocuments({ memberStatus: "removed" });
+    const officialRelocated = await OfficialKKMember.countDocuments({ memberStatus: "relocated" });
+    const officialActive = await OfficialKKMember.countDocuments({
       $or: [
         { memberStatus: "active" },
         { memberStatus: { $exists: false } },
@@ -129,7 +204,7 @@ exports.getMemberStats = async (req, res) => {
       ],
     });
 
-    const topCities = await KKMember.aggregate([
+    const topCities = await OfficialKKMember.aggregate([
       {
         $match: {
           residentialCity: { $nin: [null, ""] },
@@ -142,11 +217,17 @@ exports.getMemberStats = async (req, res) => {
     ]);
 
     res.status(200).json({
-      total,
-      active,
-      relocated,
-      removed,
+      bufferApplications,
+      officialTotal,
+      officialActive,
+      officialRelocated,
+      officialRemoved,
       topCities: topCities.map((r) => ({ city: r._id, count: r.count })),
+      // legacy keys for older dashboards
+      total: officialTotal,
+      active: officialActive,
+      relocated: officialRelocated,
+      removed: officialRemoved,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -246,6 +327,194 @@ exports.deleteMemberById = async (req, res) => {
       return res.status(404).json({ message: "Member not found" });
     }
     res.status(200).json({ message: "Member deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.approveBufferMember = async (req, res) => {
+  try {
+    const buffer = await KKMember.findById(req.params.id);
+    if (!buffer) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+    const stage = buffer.applicationStage || "buffer";
+    if (stage === "approved") {
+      return res.status(400).json({ message: "Application already approved" });
+    }
+    if (stage === "rejected") {
+      return res.status(400).json({ message: "Application was rejected" });
+    }
+
+    const existingOff = await OfficialKKMember.findOne({ sourceKkMemberId: buffer._id });
+    if (existingOff) {
+      return res.status(400).json({ message: "Official roster record already exists" });
+    }
+
+    const plain = buffer.toObject();
+    delete plain._id;
+    delete plain.__v;
+    delete plain.applicationStage;
+    delete plain.approvedAt;
+    delete plain.officialMemberId;
+    delete plain.registrationId;
+    delete plain.createdAt;
+    delete plain.updatedAt;
+
+    const official = new OfficialKKMember({
+      ...plain,
+      sourceKkMemberId: buffer._id,
+      approvedAt: new Date(),
+    });
+    await official.save();
+
+    buffer.applicationStage = "approved";
+    buffer.approvedAt = new Date();
+    buffer.officialMemberId = official._id;
+    await buffer.save();
+
+    res.status(201).json({
+      message: "Approved to official roster",
+      official: serializeOfficial(official),
+      application: serializeMember(buffer),
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({
+        message: "Duplicate field on official roster (email, CNIC, or contact may already exist)",
+      });
+    }
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.rejectBufferMember = async (req, res) => {
+  try {
+    const m = await KKMember.findById(req.params.id);
+    if (!m) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+    if (m.applicationStage === "approved") {
+      return res.status(400).json({ message: "Cannot reject an approved application" });
+    }
+    m.applicationStage = "rejected";
+    await m.save();
+    res.status(200).json(serializeMember(m));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getOfficialMembers = async (req, res) => {
+  try {
+    const filter = statusFilter(req.query.status);
+    const members = await OfficialKKMember.find(filter).sort({ approvedAt: -1, createdAt: -1 });
+    res.status(200).json({ officials: members.map(serializeOfficial) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getOfficialMemberById = async (req, res) => {
+  try {
+    const m = await OfficialKKMember.findById(req.params.officialId);
+    if (!m) {
+      return res.status(404).json({ message: "Official member not found" });
+    }
+    res.status(200).json(serializeOfficial(m));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+function normalizeOfficialBody(body) {
+  if (!body || typeof body !== "object") return body;
+  const next = { ...body };
+  delete next.registrationId;
+  delete next.sourceKkMemberId;
+  delete next.approvedAt;
+  return next;
+}
+
+exports.updateOfficialMemberById = async (req, res) => {
+  try {
+    const payload = normalizeOfficialBody(normalizeIncomingBody(req.body));
+    if (payload.cnic === "") delete payload.cnic;
+    if (payload.email === "") delete payload.email;
+
+    const m = await OfficialKKMember.findById(req.params.officialId);
+    if (!m) {
+      return res.status(404).json({ message: "Official member not found" });
+    }
+    Object.assign(m, payload);
+    await m.save();
+    res.status(200).json(serializeOfficial(m));
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Duplicate email, CNIC, or contact number" });
+    }
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.markOfficialRemoved = async (req, res) => {
+  try {
+    const { removalReason } = req.body || {};
+    if (!String(removalReason || "").trim()) {
+      return res.status(400).json({ message: "Removal reason is required" });
+    }
+    const updated = await OfficialKKMember.findByIdAndUpdate(
+      req.params.officialId,
+      {
+        memberStatus: "removed",
+        removalReason: String(removalReason).trim(),
+        removedAt: new Date(),
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updated) {
+      return res.status(404).json({ message: "Official member not found" });
+    }
+    res.status(200).json(serializeOfficial(updated));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.recordOfficialRelocation = async (req, res) => {
+  try {
+    const { relocatedToCity, relocatedFromCity } = req.body || {};
+    const toCity = String(relocatedToCity || "").trim();
+    if (!toCity) {
+      return res.status(400).json({ message: "New city (relocatedToCity) is required" });
+    }
+    const m = await OfficialKKMember.findById(req.params.officialId);
+    if (!m) {
+      return res.status(404).json({ message: "Official member not found" });
+    }
+    const fromCity =
+      String(relocatedFromCity || "").trim() || m.residentialCity || m.homeTown || "";
+
+    m.memberStatus = "relocated";
+    m.relocatedFromCity = fromCity;
+    m.relocatedToCity = toCity;
+    m.relocationRecordedAt = new Date();
+    m.residentialCity = toCity;
+    await m.save();
+
+    res.status(200).json(serializeOfficial(m));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.deleteOfficialMemberById = async (req, res) => {
+  try {
+    const deleted = await OfficialKKMember.findByIdAndDelete(req.params.officialId);
+    if (!deleted) {
+      return res.status(404).json({ message: "Official member not found" });
+    }
+    res.status(200).json({ message: "Official member deleted" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

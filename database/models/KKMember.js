@@ -3,6 +3,19 @@ const Counter = require("./Counter");
 
 const kkMemberSchema = new mongoose.Schema(
   {
+    /** buffer = pending approval; approved = promoted to OfficialKKMember; rejected = declined */
+    applicationStage: {
+      type: String,
+      enum: ["buffer", "approved", "rejected"],
+      default: "buffer",
+      index: true,
+    },
+    approvedAt: { type: Date },
+    officialMemberId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "OfficialKKMember",
+      default: null,
+    },
     registrationId: {
       type: String,
       unique: true,
