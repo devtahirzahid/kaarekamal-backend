@@ -20,11 +20,24 @@ const login = async (req, res) => {
       return res.status(404).json({ message: "Invalid credentials" });
     }
 
+    if (user.role !== "admin") {
+      return res.status(403).json({ message: "This portal is for administrators only" });
+    }
+
     const token = createSecretToken(user._id);
     user.token = token;
     await user.save();
 
-    res.json({ token });
+    const canManageAdminUsers = user.role === "admin" && !user.createdBy;
+
+    res.json({
+      token,
+      canManageAdminUsers,
+      id: user._id,
+      email: user.email,
+      username: user.username,
+      name: user.name || "",
+    });
   } catch (error) {
     console.error("Error during login:", error);
     res.status(500).json({ message: "Internal Server Error" });
@@ -90,9 +103,28 @@ const logout = async (req, res) => {
   }
 };
 
+const sessionPayload = (user) => ({
+  token: user.token,
+  canManageAdminUsers: user.role === "admin" && !user.createdBy,
+  id: user._id,
+  email: user.email,
+  username: user.username,
+  name: user.name || "",
+});
+
+const me = async (req, res) => {
+  try {
+    res.json(sessionPayload(req.user));
+  } catch (error) {
+    console.error("Error in me:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
 // Export all functions separately
 module.exports = {
   login,
   createUser,
   logout,
+  me,
 };

@@ -30,4 +30,24 @@ const authenticate = async (req, res, next) => {
   }
 };
 
-module.exports = { authenticate };
+const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({ message: "Admin access required" });
+  }
+  next();
+};
+
+/** Primary administrator only (no delegating parent). */
+const requireRootAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({ message: "Admin access required" });
+  }
+  if (req.user.createdBy) {
+    return res.status(403).json({
+      message: "Only the primary administrator can manage admin users",
+    });
+  }
+  next();
+};
+
+module.exports = { authenticate, requireAdmin, requireRootAdmin };

@@ -8,6 +8,10 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
+    name: {
+      type: String,
+      default: "",
+    },
     email: {
       type: String,
       required: true,
@@ -21,6 +25,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["user", "admin"],
       default: "user",
+    },
+    /** Set when this admin account was created by another admin; null/undefined = primary (full access). */
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
     tokenBlacklist: {
       type: Array,
